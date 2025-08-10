@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
-import { Upload, Maximize2, Minimize2, Link, Link2Off, RefreshCw, FileText, Tag, XCircle, MinusCircle, PlusCircle } from 'lucide-react';
+import { Upload, Maximize2, Minimize2, Link, Link2Off, RefreshCw, FileText, Tag, XCircle, MinusCircle, PlusCircle, Contrast, X } from 'lucide-react';
 import 'react-pdf/dist/esm/Page/AnnotationLayer.css';
 import 'react-pdf/dist/esm/Page/TextLayer.css';
 
@@ -110,6 +110,198 @@ function PDFViewer({ file, scale, containerRef, onScroll, onContextMenu, style, 
   );
 }
 
+// =====================
+// Panel de contraste
+// =====================
+
+type ContrastPanelProps = {
+  visible: boolean;
+  onClose: () => void;
+  frontDoc: 'left' | 'right';
+  setFrontDoc: (d: 'left' | 'right') => void;
+  leftPDF: File | null;
+  rightPDF: File | null;
+  leftScale: number;
+  rightScale: number;
+  leftContainerRef: React.RefObject<HTMLDivElement>;
+  rightContainerRef: React.RefObject<HTMLDivElement>;
+};
+
+function ContrastPanel({
+  visible,
+  onClose,
+  frontDoc,
+  setFrontDoc,
+  leftPDF,
+  rightPDF,
+  leftScale,
+  rightScale,
+  leftContainerRef,
+  rightContainerRef,
+}: ContrastPanelProps) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  // Contenedores espejo (no interactivos)
+  const overlayLeftRef = useRef<HTMLDivElement>(null);
+  const overlayRightRef = useRef<HTMLDivElement>(null);
+
+  // Posición y arrastre del panel
+  const [position, setPosition] = useState({ x: 24, y: 24 });
+  const [dragging, setDragging] = useState(false);
+  const dragOffset = useRef({ x: 0, y: 0 });
+
+  const onMouseDown = (e: React.MouseEvent) => {
+    // Solo si se inicia el arrastre en la barra superior
+    if ((e.target as HTMLElement).closest('.contrast-drag-handle')) {
+      setDragging(true);
+      dragOffset.current = {
+        x: e.clientX - position.x,
+        y: e.clientY - position.y,
+      };
+    }
+  };
+  const onMouseMove = (e: MouseEvent) => {
+    if (!dragging) return;
+    setPosition({ x: e.clientX - dragOffset.current.x, y: e.clientY - dragOffset.current.y });
+  };
+  const onMouseUp = () => setDragging(false);
+
+  useEffect(() => {
+    if (dragging) {
+      window.addEventListener('mousemove', onMouseMove);
+      window.addEventListener('mouseup', onMouseUp);
+    } else {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    }
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [dragging]);
+
+  // Sincroniza el scroll del panel con el scroll actual de los visores principales
+  useEffect(() => {
+    if (!visible) return;
+    const sync = () => {
+      if (leftContainerRef.current && overlayLeftRef.current) {
+        overlayLeftRef.current.scrollTop = leftContainerRef.current.scrollTop;
+      }
+      if (rightContainerRef.current && overlayRightRef.current) {
+        overlayRightRef.current.scrollTop = rightContainerRef.current.scrollTop;
+      }
+    };
+    sync();
+
+    const leftEl = leftContainerRef.current;
+    const rightEl = rightContainerRef.current;
+    const onLeft = () => {
+      if (overlayLeftRef.current && leftEl) overlayLeftRef.current.scrollTop = leftEl.scrollTop;
+    };
+    const onRight = () => {
+      if (overlayRightRef.current && rightEl) overlayRightRef.current.scrollTop = rightEl.scrollTop;
+    };
+
+    leftEl?.addEventListener('scroll', onLeft);
+    rightEl?.addEventListener('scroll', onRight);
+    return () => {
+      leftEl?.removeEventListener('scroll', onLeft);
+      rightEl?.removeEventListener('scroll', onRight);
+    };
+  }, [visible, leftContainerRef, rightContainerRef, leftPDF, rightPDF, leftScale, rightScale]);
+
+  if (!visible) return null;
+
+  const showLeftOnTop = frontDoc === 'left';
+
+  return (
+    <div
+      ref={panelRef}
+      onMouseDown={onMouseDown}
+      className="fixed bg-white shadow-xl border rounded-xl overflow-hidden select-none"
+      style={{ width: '25%', height: '25%', top: position.y, left: position.x, zIndex: 60 }}
+    >
+      {/* Barra superior */}
+      <div className="contrast-drag-handle bg-gray-100 px-2 py-1 flex items-center justify-between cursor-move">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={(e) => { e.stopPropagation(); setFrontDoc(showLeftOnTop ? 'right' : 'left'); }}
+            className={`flex items-center gap-2 px-2 py-1 rounded-lg text-sm ${showLeftOnTop ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}
+            title="Cambiar documento al frente"
+          >
+            <span>{showLeftOnTop ? 'Izquierda al frente' : 'Derecha al frente'}</span>
+          </button>
+        </div>
+        <button onClick={(e) => { e.stopPropagation(); onClose(); }} className="p-1 rounded hover:bg-gray-200" title="Cerrar panel">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Capas superpuestas */}
+      <div className="relative w-full h-[calc(100%-34px)] bg-gray-50">
+        {/* Capa de atrás (opacidad 100%) */}
+        <div className="absolute inset-0" style={{ opacity: 1 }}>
+          {rightPDF || leftPDF ? (
+            showLeftOnTop ? (
+              // Si la izquierda va arriba, atrás va la derecha
+              rightPDF ? (
+                <PDFViewer
+                  file={rightPDF}
+                  scale={rightScale}
+                  containerRef={overlayRightRef}
+                  className="pointer-events-none"
+                />
+              ) : (
+                <div className="w-full h-full bg-white" />
+              )
+            ) : (
+              // Si la derecha va arriba, atrás va la izquierda
+              leftPDF ? (
+                <PDFViewer
+                  file={leftPDF}
+                  scale={leftScale}
+                  containerRef={overlayLeftRef}
+                  className="pointer-events-none"
+                />
+              ) : (
+                <div className="w-full h-full bg-white" />
+              )
+            )
+          ) : null}
+        </div>
+
+        {/* Capa de adelante (opacidad 50%) */}
+        <div className="absolute inset-0" style={{ opacity: 0.5 }}>
+          {rightPDF || leftPDF ? (
+            showLeftOnTop ? (
+              leftPDF ? (
+                <PDFViewer
+                  file={leftPDF}
+                  scale={leftScale}
+                  containerRef={overlayLeftRef}
+                  className="pointer-events-none"
+                />
+              ) : (
+                <div className="w-full h-full" />
+              )
+            ) : (
+              rightPDF ? (
+                <PDFViewer
+                  file={rightPDF}
+                  scale={rightScale}
+                  containerRef={overlayRightRef}
+                  className="pointer-events-none"
+                />
+              ) : (
+                <div className="w-full h-full" />
+              )
+            )
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   // Función para intercambiar los documentos
   const swapDocuments = () => {
@@ -159,6 +351,10 @@ function App() {
   const [rightInputKey, setRightInputKey] = useState(Date.now());
   const [zoomDiff, setZoomDiff] = useState(0);
   const [scrollDiff, setScrollDiff] = useState(0);
+
+  // === NUEVO: Estado del panel de contraste ===
+  const [showContrast, setShowContrast] = useState(false);
+  const [frontDoc, setFrontDoc] = useState<'left' | 'right'>('left');
 
   const leftContainerRef = useRef<HTMLDivElement>(null);
   const rightContainerRef = useRef<HTMLDivElement>(null);
@@ -335,7 +531,7 @@ function App() {
       <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
           </div>
           {/* Botón de intercambio */}
-          <div className="flex gap-4">
+          <div className="flex flex-wrap gap-4 items-center">
           <h1 className="text-2xl font-bold text-gray-800">Comparador</h1>
             <button
               onClick={swapDocuments}
@@ -405,6 +601,22 @@ function App() {
             >
               {isFullscreen ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
             </button>
+
+            {/* === NUEVO: Switch de Contraste === */}
+            <div className="flex items-center gap-2 ml-auto">
+              <span className="text-sm text-gray-700">Contraste</span>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="sr-only peer"
+                  checked={showContrast}
+                  onChange={() => setShowContrast(v => !v)}
+                />
+                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:bg-blue-600 transition-colors"></div>
+                <div className={`absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full transition-transform ${showContrast ? 'translate-x-5' : ''}`}></div>
+              </label>
+              <Contrast className={`w-5 h-5 ${showContrast ? 'text-blue-600' : 'text-gray-500'}`} />
+            </div>
           </div>
         </div>
 
@@ -726,6 +938,21 @@ function App() {
           </div>
         )}
       </div>
+
+      {/* === NUEVO: Panel flotante de contraste === */}
+      <ContrastPanel
+        visible={showContrast}
+        onClose={() => setShowContrast(false)}
+        frontDoc={frontDoc}
+        setFrontDoc={setFrontDoc}
+        leftPDF={leftPDF}
+        rightPDF={rightPDF}
+        leftScale={leftScale}
+        rightScale={rightScale}
+        leftContainerRef={leftContainerRef}
+        rightContainerRef={rightContainerRef}
+      />
+    </div>
   );
 }
 
