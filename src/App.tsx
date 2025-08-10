@@ -952,7 +952,6 @@ function App() {
         rightContainerRef={rightContainerRef}
       />
     </>
-    </div>
   );
 }
 
