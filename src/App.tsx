@@ -652,7 +652,7 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gray-100 dark:bg-neutral-900 p-2 sm:p-4 text-gray-900 dark:text-neutral-200">
-      <div className="w-full max-w-[2200px] mx-auto bg-white dark:bg-neutral-800 rounded-xl shadow-lg p-2 sm:p-6 relative border border-gray-200 dark:border-neutral-700">
+      <div className="w-full max-w-[2500px] mx-auto bg-white dark:bg-neutral-800 rounded-xl shadow-lg p-2 sm:p-6 relative border border-gray-200 dark:border-neutral-700">
         <div className="flex flex-wrap gap-4 items-center">
           <h1 className="text-2xl font-bold text-gray-800 dark:text-neutral-100">Comparador</h1>
           <button
