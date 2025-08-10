@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
-import { Upload, Maximize2, Minimize2, Link, Link2Off, RefreshCw, FileText, Tag, XCircle, MinusCircle, PlusCircle } from 'lucide-react';
+import { Upload, Maximize2, Minimize2, Link, Link2Off, RefreshCw, FileText, Tag, XCircle, MinusCircle, PlusCircle, Contrast, X } from 'lucide-react';
 import 'react-pdf/dist/esm/Page/AnnotationLayer.css';
 import 'react-pdf/dist/esm/Page/TextLayer.css';
 
@@ -110,6 +110,198 @@ function PDFViewer({ file, scale, containerRef, onScroll, onContextMenu, style, 
   );
 }
 
+// =====================
+// Panel de contraste
+// =====================
+
+type ContrastPanelProps = {
+  visible: boolean;
+  onClose: () => void;
+  frontDoc: 'left' | 'right';
+  setFrontDoc: (d: 'left' | 'right') => void;
+  leftPDF: File | null;
+  rightPDF: File | null;
+  leftScale: number;
+  rightScale: number;
+  leftContainerRef: React.RefObject<HTMLDivElement>;
+  rightContainerRef: React.RefObject<HTMLDivElement>;
+};
+
+function ContrastPanel({
+  visible,
+  onClose,
+  frontDoc,
+  setFrontDoc,
+  leftPDF,
+  rightPDF,
+  leftScale,
+  rightScale,
+  leftContainerRef,
+  rightContainerRef,
+}: ContrastPanelProps) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  // Contenedores espejo (no interactivos)
+  const overlayLeftRef = useRef<HTMLDivElement>(null);
+  const overlayRightRef = useRef<HTMLDivElement>(null);
+
+  // Posición y arrastre del panel
+  const [position, setPosition] = useState({ x: 24, y: 24 });
+  const [dragging, setDragging] = useState(false);
+  const dragOffset = useRef({ x: 0, y: 0 });
+
+  const onMouseDown = (e: React.MouseEvent) => {
+    // Solo si se inicia el arrastre en la barra superior
+    if ((e.target as HTMLElement).closest('.contrast-drag-handle')) {
+      setDragging(true);
+      dragOffset.current = {
+        x: e.clientX - position.x,
+        y: e.clientY - position.y,
+      };
+    }
+  };
+  const onMouseMove = (e: MouseEvent) => {
+    if (!dragging) return;
+    setPosition({ x: e.clientX - dragOffset.current.x, y: e.clientY - dragOffset.current.y });
+  };
+  const onMouseUp = () => setDragging(false);
+
+  useEffect(() => {
+    if (dragging) {
+      window.addEventListener('mousemove', onMouseMove);
+      window.addEventListener('mouseup', onMouseUp);
+    } else {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    }
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [dragging]);
+
+  // Sincroniza el scroll del panel con el scroll actual de los visores principales
+  useEffect(() => {
+    if (!visible) return;
+    const sync = () => {
+      if (leftContainerRef.current && overlayLeftRef.current) {
+        overlayLeftRef.current.scrollTop = leftContainerRef.current.scrollTop;
+      }
+      if (rightContainerRef.current && overlayRightRef.current) {
+        overlayRightRef.current.scrollTop = rightContainerRef.current.scrollTop;
+      }
+    };
+    sync();
+
+    const leftEl = leftContainerRef.current;
+    const rightEl = rightContainerRef.current;
+    const onLeft = () => {
+      if (overlayLeftRef.current && leftEl) overlayLeftRef.current.scrollTop = leftEl.scrollTop;
+    };
+    const onRight = () => {
+      if (overlayRightRef.current && rightEl) overlayRightRef.current.scrollTop = rightEl.scrollTop;
+    };
+
+    leftEl?.addEventListener('scroll', onLeft);
+    rightEl?.addEventListener('scroll', onRight);
+    return () => {
+      leftEl?.removeEventListener('scroll', onLeft);
+      rightEl?.removeEventListener('scroll', onRight);
+    };
+  }, [visible, leftContainerRef, rightContainerRef, leftPDF, rightPDF, leftScale, rightScale]);
+
+  if (!visible) return null;
+
+  const showLeftOnTop = frontDoc === 'left';
+
+  return (
+    <div
+      ref={panelRef}
+      onMouseDown={onMouseDown}
+      className="fixed bg-white shadow-xl border rounded-xl overflow-hidden select-none"
+      style={{ width: '25%', height: '25%', top: position.y, left: position.x, zIndex: 60 }}
+    >
+      {/* Barra superior */}
+      <div className="contrast-drag-handle bg-gray-100 px-2 py-1 flex items-center justify-between cursor-move">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={(e) => { e.stopPropagation(); setFrontDoc(showLeftOnTop ? 'right' : 'left'); }}
+            className={`flex items-center gap-2 px-2 py-1 rounded-lg text-sm ${showLeftOnTop ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}
+            title="Cambiar documento al frente"
+          >
+            <span>{showLeftOnTop ? 'Izquierda al frente' : 'Derecha al frente'}</span>
+          </button>
+        </div>
+        <button onClick={(e) => { e.stopPropagation(); onClose(); }} className="p-1 rounded hover:bg-gray-200" title="Cerrar panel">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Capas superpuestas */}
+      <div className="relative w-full h-[calc(100%-34px)] bg-gray-50">
+        {/* Capa de atrás (opacidad 100%) */}
+        <div className="absolute inset-0" style={{ opacity: 1 }}>
+          {rightPDF || leftPDF ? (
+            showLeftOnTop ? (
+              // Si la izquierda va arriba, atrás va la derecha
+              rightPDF ? (
+                <PDFViewer
+                  file={rightPDF}
+                  scale={rightScale}
+                  containerRef={overlayRightRef}
+                  className="pointer-events-none"
+                />
+              ) : (
+                <div className="w-full h-full bg-white" />
+              )
+            ) : (
+              // Si la derecha va arriba, atrás va la izquierda
+              leftPDF ? (
+                <PDFViewer
+                  file={leftPDF}
+                  scale={leftScale}
+                  containerRef={overlayLeftRef}
+                  className="pointer-events-none"
+                />
+              ) : (
+                <div className="w-full h-full bg-white" />
+              )
+            )
+          ) : null}
+        </div>
+
+        {/* Capa de adelante (opacidad 50%) */}
+        <div className="absolute inset-0" style={{ opacity: 0.5 }}>
+          {rightPDF || leftPDF ? (
+            showLeftOnTop ? (
+              leftPDF ? (
+                <PDFViewer
+                  file={leftPDF}
+                  scale={leftScale}
+                  containerRef={overlayLeftRef}
+                  className="pointer-events-none"
+                />
+              ) : (
+                <div className="w-full h-full" />
+              )
+            ) : (
+              rightPDF ? (
+                <PDFViewer
+                  file={rightPDF}
+                  scale={rightScale}
+                  containerRef={overlayRightRef}
+                  className="pointer-events-none"
+                />
+              ) : (
+                <div className="w-full h-full" />
+              )
+            )
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   // Función para intercambiar los documentos
   const swapDocuments = () => {
@@ -159,6 +351,10 @@ function App() {
   const [rightInputKey, setRightInputKey] = useState(Date.now());
   const [zoomDiff, setZoomDiff] = useState(0);
   const [scrollDiff, setScrollDiff] = useState(0);
+
+  // === NUEVO: Estado del panel de contraste ===
+  const [showContrast, setShowContrast] = useState(false);
+  const [frontDoc, setFrontDoc] = useState<'left' | 'right'>('left');
 
   const leftContainerRef = useRef<HTMLDivElement>(null);
   const rightContainerRef = useRef<HTMLDivElement>(null);
@@ -330,109 +526,80 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 p-2 sm:p-4">
-      <div className="w-full max-w-[2200px] mx-auto bg-white rounded-xl shadow-lg p-2 sm:p-6 relative">
-      <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
-          </div>
+    <>
+      <div className="min-h-screen bg-gray-100 p-2 sm:p-4">
+        <div className="w-full max-w-[2200px] mx-auto bg-white rounded-xl shadow-lg p-2 sm:p-6 relative">
+          <div className="flex flex-col sm:flex-row justify-between items-center gap-4"></div>
           {/* Botón de intercambio */}
-          <div className="flex gap-4">
-          <h1 className="text-2xl font-bold text-gray-800">Comparador</h1>
+          <div className="flex flex-wrap gap-4 items-center">
+            <h1 className="text-2xl font-bold text-gray-800">Comparador</h1>
             <button
               onClick={swapDocuments}
               className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm"
               disabled={!leftPDF && !rightPDF}
               title="Intercambiar documentos"
             >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                className="w-5 h-5"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M4 7h16m0 0-3-3m3 3-3 3 M20 17H4m0 0 3-3m-3 3 3 3"
-                />
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" className="w-5 h-5">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16m0 0-3-3m3 3-3 3 M20 17H4m0 0 3-3m-3 3 3 3" />
               </svg>
             </button>
             <button
               onClick={() => setSyncZoom((prev) => !prev)}
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg ${
-                syncZoom ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 hover:bg-gray-200'
-              }`}
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg ${syncZoom ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 hover:bg-gray-200'}`}
             >
               {syncZoom ? <Link className="w-5 h-5" /> : <Link2Off className="w-5 h-5" />}
               <span className="text-sm">Zoom</span>
             </button>
             <button
               onClick={() => setSyncScroll((prev) => !prev)}
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg ${
-                syncScroll ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 hover:bg-gray-200'
-              }`}
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg ${syncScroll ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 hover:bg-gray-200'}`}
             >
               {syncScroll ? <Link className="w-5 h-5" /> : <Link2Off className="w-5 h-5" />}
               <span className="text-sm">Scroll</span>
             </button>
             <button
               onClick={() => setEnableEtiquetar((prev) => !prev)}
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg ${
-                enableEtiquetar ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 hover:bg-gray-200'
-              }`}
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg ${enableEtiquetar ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 hover:bg-gray-200'}`}
             >
               <Tag className="w-5 h-5" />
             </button>
-            <button
-              onClick={() => setShowEtiquetasModal(true)}
-              className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm"
-            >
-              Etiquetas
-            </button>
-            <button
-              onClick={() => setShowResumenModal(true)}
-              className="p-2 rounded-lg hover:bg-gray-100"
-            >
+            <button onClick={() => setShowEtiquetasModal(true)} className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm">Etiquetas</button>
+            <button onClick={() => setShowResumenModal(true)} className="p-2 rounded-lg hover:bg-gray-100">
               <FileText className="w-5 h-5" />
             </button>
             <button onClick={refreshDocuments} className="p-2 rounded-lg hover:bg-gray-100">
               <RefreshCw className="w-5 h-5" />
             </button>
-            <button
-              onClick={toggleFullscreen}
-              className="p-2 rounded-lg hover:bg-gray-100"
-            >
+            <button onClick={toggleFullscreen} className="p-2 rounded-lg hover:bg-gray-100">
               {isFullscreen ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
             </button>
+
+            {/* === NUEVO: Switch de Contraste === */}
+            <div className="flex items-center gap-2 ml-auto">
+              <span className="text-sm text-gray-700">Contraste</span>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" className="sr-only peer" checked={showContrast} onChange={() => setShowContrast(v => !v)} />
+                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:bg-blue-600 transition-colors"></div>
+                <div className={`absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full transition-transform ${showContrast ? 'translate-x-5' : ''}`}></div>
+              </label>
+              <Contrast className={`w-5 h-5 ${showContrast ? 'text-blue-600' : 'text-gray-500'}`} />
+            </div>
           </div>
         </div>
 
-  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
           <div className="flex flex-col">
             <div className="bg-white bg-opacity-90 px-4 py-2 rounded-full shadow-lg flex items-center gap-3 justify-center mb-4 w-fit mx-auto mt-4">
-              {/* Nombre del documento */}
               {leftPDF && (
-                <span className="text-xs text-gray-500 max-w-[180px] truncate" title={getFileName(leftPDF)}>
-                  {getFileName(leftPDF)}
-                </span>
+                <span className="text-xs text-gray-500 max-w-[180px] truncate" title={getFileName(leftPDF)}>{getFileName(leftPDF)}</span>
               )}
-              <button 
-                onClick={() => changeLeftZoom(-0.1)}
-                className="text-gray-600 hover:text-gray-800 transition-colors"
-              >
+              <button onClick={() => changeLeftZoom(-0.1)} className="text-gray-600 hover:text-gray-800 transition-colors">
                 <MinusCircle className="w-5 h-5" />
               </button>
-              <span className="text-sm font-medium min-w-[60px] text-center">
-                {Math.round(leftScale * 100)}%
-              </span>
-              <button 
-                onClick={() => changeLeftZoom(0.1)}
-                className="text-gray-600 hover:text-gray-800 transition-colors"
-              >
+              <span className="text-sm font-medium min-w-[60px] text-center">{Math.round(leftScale * 100)}%</span>
+              <button onClick={() => changeLeftZoom(0.1)} className="text-gray-600 hover:text-gray-800 transition-colors">
                 <PlusCircle className="w-5 h-5" />
               </button>
-              {/* Botón eliminar */}
               {leftPDF && (
                 <button onClick={() => removeDocument('left')} className="text-red-500 hover:text-red-700 ml-2" title="Eliminar PDF">
                   <XCircle className="w-5 h-5" />
@@ -442,28 +609,16 @@ function App() {
           </div>
           <div className="flex flex-col">
             <div className="bg-white bg-opacity-90 px-4 py-2 rounded-full shadow-lg flex items-center gap-3 justify-center mb-4 w-fit mx-auto mt-4">
-              {/* Nombre del documento */}
               {rightPDF && (
-                <span className="text-xs text-gray-500 max-w-[180px] truncate" title={getFileName(rightPDF)}>
-                  {getFileName(rightPDF)}
-                </span>
+                <span className="text-xs text-gray-500 max-w-[180px] truncate" title={getFileName(rightPDF)}>{getFileName(rightPDF)}</span>
               )}
-              <button 
-                onClick={() => changeRightZoom(-0.1)}
-                className="text-gray-600 hover:text-gray-800 transition-colors"
-              >
+              <button onClick={() => changeRightZoom(-0.1)} className="text-gray-600 hover:text-gray-800 transition-colors">
                 <MinusCircle className="w-5 h-5" />
               </button>
-              <span className="text-sm font-medium min-w-[60px] text-center">
-                {Math.round(rightScale * 100)}%
-              </span>
-              <button 
-                onClick={() => changeRightZoom(0.1)}
-                className="text-gray-600 hover:text-gray-800 transition-colors"
-              >
+              <span className="text-sm font-medium min-w-[60px] text-center">{Math.round(rightScale * 100)}%</span>
+              <button onClick={() => changeRightZoom(0.1)} className="text-gray-600 hover:text-gray-800 transition-colors">
                 <PlusCircle className="w-5 h-5" />
               </button>
-              {/* Botón eliminar */}
               {rightPDF && (
                 <button onClick={() => removeDocument('right')} className="text-red-500 hover:text-red-700 ml-2" title="Eliminar PDF">
                   <XCircle className="w-5 h-5" />
@@ -473,108 +628,40 @@ function App() {
           </div>
         </div>
 
-  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 h-[calc(100vh-200px)] min-h-[500px] max-h-[1500px]">
-            <div
-            onDragOver={!leftPDF ? (e) => e.preventDefault() : undefined}
-            onDrop={!leftPDF ? (e) => handleDrop(e, 'left') : undefined}
-            onContextMenu={enableEtiquetar ? handleLeftContextMenu : undefined}
-            className="relative"
-            >
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 h-[calc(100vh-200px)] min-h-[500px] max-h-[1500px]">
+          <div onDragOver={!leftPDF ? (e) => e.preventDefault() : undefined} onDrop={!leftPDF ? (e) => handleDrop(e, 'left') : undefined} onContextMenu={enableEtiquetar ? handleLeftContextMenu : undefined} className="relative">
             {!leftPDF ? (
               <div className="w-full h-full">
-              <input
-                key={leftInputKey}
-                type="file"
-                accept=".pdf"
-                onChange={(e) => handleFileChange(e, 'left')}
-                className="hidden"
-                id="left-pdf"
-              />
-              <label
-                htmlFor="left-pdf"
-                className="absolute inset-0"
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => handleDrop(e, 'left')}
-              >
-                <PDFViewer
-                file={null}
-                scale={leftScale}
-                containerRef={leftContainerRef}
-                onScroll={onLeftScroll}
-                onContextMenu={enableEtiquetar ? handleLeftContextMenu : undefined}
-                />
-              </label>
+                <input key={leftInputKey} type="file" accept=".pdf" onChange={(e) => handleFileChange(e, 'left')} className="hidden" id="left-pdf" />
+                <label htmlFor="left-pdf" className="absolute inset-0" onDragOver={(e) => e.preventDefault()} onDrop={(e) => handleDrop(e, 'left')}>
+                  <PDFViewer file={null} scale={leftScale} containerRef={leftContainerRef} onScroll={onLeftScroll} onContextMenu={enableEtiquetar ? handleLeftContextMenu : undefined} />
+                </label>
               </div>
             ) : (
               <>
-              <input
-                key={leftInputKey}
-                type="file"
-                accept=".pdf"
-                onChange={(e) => handleFileChange(e, 'left')}
-                className="hidden"
-                id="left-pdf"
-                disabled={!!leftPDF}
-              />
-              {leftPDF ? (
-                <label htmlFor="left-pdf" className="absolute inset-0 cursor-pointer z-10">
-                <PDFViewer
-                  file={leftPDF}
-                  scale={leftScale}
-                  containerRef={leftContainerRef}
-                  onScroll={onLeftScroll}
-                  onContextMenu={enableEtiquetar ? handleLeftContextMenu : undefined}
-                />
-                </label>
-              ) : (
-                <div className="absolute inset-0 z-0">
-                <PDFViewer
-                  file={leftPDF}
-                  scale={leftScale}
-                  containerRef={leftContainerRef}
-                  onScroll={onLeftScroll}
-                  onContextMenu={enableEtiquetar ? handleLeftContextMenu : undefined}
-                />
-                </div>
-              )}
+                <input key={leftInputKey} type="file" accept=".pdf" onChange={(e) => handleFileChange(e, 'left')} className="hidden" id="left-pdf" disabled={!!leftPDF} />
+                {leftPDF ? (
+                  <label htmlFor="left-pdf" className="absolute inset-0 cursor-pointer z-10">
+                    <PDFViewer file={leftPDF} scale={leftScale} containerRef={leftContainerRef} onScroll={onLeftScroll} onContextMenu={enableEtiquetar ? handleLeftContextMenu : undefined} />
+                  </label>
+                ) : (
+                  <div className="absolute inset-0 z-0">
+                    <PDFViewer file={leftPDF} scale={leftScale} containerRef={leftContainerRef} onScroll={onLeftScroll} onContextMenu={enableEtiquetar ? handleLeftContextMenu : undefined} />
+                  </div>
+                )}
               </>
             )}
-            </div>
+          </div>
 
-          <div
-            onDragOver={!rightPDF ? (e) => e.preventDefault() : undefined}
-            onDrop={!rightPDF ? (e) => handleDrop(e, 'right') : undefined}
-            onContextMenu={enableEtiquetar ? handleRightContextMenu : undefined}
-            className="relative"
-          >
-            <input
-              key={rightInputKey}
-              type="file"
-              accept=".pdf"
-              onChange={(e) => handleFileChange(e, 'right')}
-              className="hidden"
-              id="right-pdf"
-              disabled={!!rightPDF}
-            />
+          <div onDragOver={!rightPDF ? (e) => e.preventDefault() : undefined} onDrop={!rightPDF ? (e) => handleDrop(e, 'right') : undefined} onContextMenu={enableEtiquetar ? handleRightContextMenu : undefined} className="relative">
+            <input key={rightInputKey} type="file" accept=".pdf" onChange={(e) => handleFileChange(e, 'right')} className="hidden" id="right-pdf" disabled={!!rightPDF} />
             {!rightPDF ? (
               <label htmlFor="right-pdf" className="absolute inset-0 cursor-pointer z-10">
-                <PDFViewer
-                  file={rightPDF}
-                  scale={rightScale}
-                  containerRef={rightContainerRef}
-                  onScroll={onRightScroll}
-                  onContextMenu={enableEtiquetar ? handleRightContextMenu : undefined}
-                />
+                <PDFViewer file={rightPDF} scale={rightScale} containerRef={rightContainerRef} onScroll={onRightScroll} onContextMenu={enableEtiquetar ? handleRightContextMenu : undefined} />
               </label>
             ) : (
               <div className="absolute inset-0 z-0">
-                <PDFViewer
-                  file={rightPDF}
-                  scale={rightScale}
-                  containerRef={rightContainerRef}
-                  onScroll={onRightScroll}
-                  onContextMenu={enableEtiquetar ? handleRightContextMenu : undefined}
-                />
+                <PDFViewer file={rightPDF} scale={rightScale} containerRef={rightContainerRef} onScroll={onRightScroll} onContextMenu={enableEtiquetar ? handleRightContextMenu : undefined} />
               </div>
             )}
           </div>
@@ -584,30 +671,11 @@ function App() {
         {!leftPDF && !rightPDF && (
           <div className="fixed inset-0 flex items-center justify-center bg-white bg-opacity-90 z-10">
             <div className="w-full max-w-xl p-6">
-              <input
-                type="file"
-                accept=".pdf"
-                multiple
-                onChange={(e) => handleBothFilesChange(Array.from(e.target.files || []))}
-                className="hidden"
-                id="pdf-upload-central"
-              />
-              <label
-                htmlFor="pdf-upload-central"
-                className="flex flex-col items-center justify-center w-full border-2 border-dashed border-blue-300 rounded-lg p-8 cursor-pointer bg-blue-50 hover:bg-blue-100"
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  handleBothFilesChange(Array.from(e.dataTransfer.files));
-                }}
-              >
+              <input type="file" accept=".pdf" multiple onChange={(e) => handleBothFilesChange(Array.from(e.target.files || []))} className="hidden" id="pdf-upload-central" />
+              <label htmlFor="pdf-upload-central" className="flex flex-col items-center justify-center w-full border-2 border-dashed border-blue-300 rounded-lg p-8 cursor-pointer bg-blue-50 hover:bg-blue-100" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); handleBothFilesChange(Array.from(e.dataTransfer.files)); }}>
                 <Upload className="w-16 h-16 text-blue-400 mb-4" />
-                <p className="text-lg text-blue-700 font-medium text-center mb-2">
-                  Arrastra o selecciona los Documentos a comparar
-                </p>
-                <p className="text-sm text-gray-500">
-                  Puedes seleccionar uno o dos archivos a la vez
-                </p>
+                <p className="text-lg text-blue-700 font-medium text-center mb-2">Arrastra o selecciona los Documentos a comparar</p>
+                <p className="text-sm text-gray-500">Puedes seleccionar uno o dos archivos a la vez</p>
               </label>
             </div>
           </div>
@@ -621,36 +689,17 @@ function App() {
                 {labels.map((label) => (
                   <li key={label} className="py-1 border-b flex justify-between items-center">
                     <span>{label}</span>
-                    <button
-                      onClick={() => removeLabel(label)}
-                      className="text-red-500 hover:text-red-700"
-                    >
+                    <button onClick={() => removeLabel(label)} className="text-red-500 hover:text-red-700">
                       <XCircle className="w-4 h-4" />
                     </button>
                   </li>
                 ))}
               </ul>
               <div className="flex gap-2 mb-4">
-                <input
-                  type="text"
-                  placeholder="Nueva etiqueta"
-                  className="border p-1 rounded flex-1"
-                  id="new-label"
-                />
-                <button
-                  onClick={() => {
-                    const input = document.getElementById('new-label') as HTMLInputElement;
-                    addNewLabel(input.value);
-                    input.value = '';
-                  }}
-                  className="bg-blue-500 text-white px-2 rounded"
-                >
-                  Agregar
-                </button>
+                <input type="text" placeholder="Nueva etiqueta" className="border p-1 rounded flex-1" id="new-label" />
+                <button onClick={() => { const input = document.getElementById('new-label') as HTMLInputElement; addNewLabel(input.value); input.value = ''; }} className="bg-blue-500 text-white px-2 rounded">Agregar</button>
               </div>
-              <button onClick={() => setShowEtiquetasModal(false)} className="px-4 py-2 bg-gray-200 rounded">
-                Cerrar
-              </button>
+              <button onClick={() => setShowEtiquetasModal(false)} className="px-4 py-2 bg-gray-200 rounded">Cerrar</button>
             </div>
           </div>
         )}
@@ -664,60 +713,41 @@ function App() {
               ) : (
                 <table className="w-full border">
                   <thead>
-                  <tr className="bg-gray-100">
-                    <th className="border px-2 py-1">Etiqueta</th>
-                    <th className="border px-2 py-1 text-left">{leftPDF ? getFileName(leftPDF) : "PDF 1"}</th>
-                    <th className="border px-2 py-1 text-left">{rightPDF ? getFileName(rightPDF) : "PDF 2"}</th>
-                    <th className="border px-2 py-1"></th>
-                  </tr>
+                    <tr className="bg-gray-100">
+                      <th className="border px-2 py-1">Etiqueta</th>
+                      <th className="border px-2 py-1 text-left">{leftPDF ? getFileName(leftPDF) : 'PDF 1'}</th>
+                      <th className="border px-2 py-1 text-left">{rightPDF ? getFileName(rightPDF) : 'PDF 2'}</th>
+                      <th className="border px-2 py-1"></th>
+                    </tr>
                   </thead>
                   <tbody>
-                  {summary.map((item) => (
-                    <tr key={item.label}>
-                    <td className="border px-2 py-1">{item.label}</td>
-                    <td className="border px-2 py-1">{item.left || '-'}</td>
-                    <td className="border px-2 py-1">{item.right || '-'}</td>
-                    <td className="border px-2 py-1">
-                      <button
-                      onClick={() => removeFromSummary(item.label)}
-                      className="text-red-500 hover:text-red-700"
-                      >
-                      <XCircle className="w-4 h-4" />
-                      </button>
-                    </td>
-                    </tr>
-                  ))}
+                    {summary.map((item) => (
+                      <tr key={item.label}>
+                        <td className="border px-2 py-1">{item.label}</td>
+                        <td className="border px-2 py-1">{item.left || '-'}</td>
+                        <td className="border px-2 py-1">{item.right || '-'}</td>
+                        <td className="border px-2 py-1">
+                          <button onClick={() => removeFromSummary(item.label)} className="text-red-500 hover:text-red-700">
+                            <XCircle className="w-4 h-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               )}
-              <button onClick={() => setShowResumenModal(false)} className="mt-4 px-4 py-2 bg-gray-200 rounded">
-                Cerrar
-              </button>
+              <button onClick={() => setShowResumenModal(false)} className="mt-4 px-4 py-2 bg-gray-200 rounded">Cerrar</button>
             </div>
           </div>
         )}
 
         {contextMenu && (
-          <div
-            className="context-menu fixed bg-white border rounded shadow-lg z-30"
-            style={{ top: contextMenu.y, left: contextMenu.x }}
-          >
+          <div className="context-menu fixed bg-white border rounded shadow-lg z-30" style={{ top: contextMenu.y, left: contextMenu.x }}>
             <div className="p-2">
-              <input
-                type="text"
-                placeholder="Buscar etiqueta..."
-                className="border p-1 w-full mb-2"
-                value={labelSearch}
-                onChange={(e) => setLabelSearch(e.target.value)}
-                autoFocus
-              />
+              <input type="text" placeholder="Buscar etiqueta..." className="border p-1 w-full mb-2" value={labelSearch} onChange={(e) => setLabelSearch(e.target.value)} autoFocus />
               <ul className="max-h-[200px] overflow-y-auto">
                 {filteredLabels.map((label) => (
-                  <li
-                    key={label}
-                    onClick={() => handleLabelSelect(label)}
-                    className="px-4 py-2 hover:bg-gray-100 cursor-pointer"
-                  >
+                  <li key={label} onClick={() => handleLabelSelect(label)} className="px-4 py-2 hover:bg-gray-100 cursor-pointer">
                     {label}
                   </li>
                 ))}
@@ -726,6 +756,21 @@ function App() {
           </div>
         )}
       </div>
+
+      {/* Panel flotante de contraste fuera del contenedor principal */}
+      <ContrastPanel
+        visible={showContrast}
+        onClose={() => setShowContrast(false)}
+        frontDoc={frontDoc}
+        setFrontDoc={setFrontDoc}
+        leftPDF={leftPDF}
+        rightPDF={rightPDF}
+        leftScale={leftScale}
+        rightScale={rightScale}
+        leftContainerRef={leftContainerRef}
+        rightContainerRef={rightContainerRef}
+      />
+    </>
   );
 }
 
