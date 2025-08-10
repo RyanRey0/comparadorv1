@@ -939,7 +939,6 @@ function App() {
         )}
       </div>
 
-      {/* === NUEVO: Panel flotante de contraste === */}
       <ContrastPanel
         visible={showContrast}
         onClose={() => setShowContrast(false)}
